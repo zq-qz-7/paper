@@ -253,6 +253,9 @@ class GP:
             cur_gap = self.convergence()
 
     def initialize(self):
+        for link in self.net.Link[1:]:
+            link.flow = 0
+        self.net.update_all_link_cost()
         for od in self.net.OD:
             ori, des, demand = od.origin, od.destination, od.demand
             shortest_path = dijkstra(ori.node_id, des.node_id, self.net)
@@ -324,6 +327,9 @@ class Output:
 
 if __name__ == "__main__":
     sf = Network("Nguyen-Dupuis")
+    # for link in sf.Link[1:]:
+    #     print(f"{link}--flow:{link.flow}, cost:{link.cost}")
     assignment = GP(net=sf, epsilon=1e-6)
+    # assignment = FW(net=sf, main_gap=0.0001, ls_gap=0.0001)
     output = Output(sf)
     output.print_flow_cost()
