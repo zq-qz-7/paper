@@ -3,7 +3,6 @@ import re
 from math import inf
 from itertools import product
 import numpy as np
-from copy import deepcopy
 
 class NODE:
     def __init__(self, node_id):
@@ -84,14 +83,8 @@ class Hyperpath:
     def __repr__(self):
         return f'{self.ori} - {self.des}: cost= {self.path_cost}, flow= {self.path_flow}'
 
-
     def update_path_cost(self):
-        self.path_cost = 0
-        for node in self.included_nodes:
-            if node != self.des:
-                for link in node.l_out:
-                    for state in link.state:
-                        self.path_cost += state.cost * (self.state_rho[state] * self.node_rho[state.tail_node])
+        self.path_cost = sum(state.cost * (self.state_rho[state] * self.node_rho[state.tail_node]) for state in self.included_states)
 
 
 class POLICY:
@@ -160,10 +153,10 @@ class Network:
             # Create Link_State
             if self.strategy[i]:
                 state_1 = State(state_id=1, mother_link=link, prob=0.9, head_node=head, tail_node=tail,
-                                capacity=float(line[2]) * 0.9, length=int(line[3]), fft=float(line[4]),
+                                capacity=float(line[2]) * 0.9, length=int(line[3]), fft=1,
                                 b=float(line[5]), power=int(line[6]))
                 state_2 = State(state_id=2, mother_link=link, prob=0.1, head_node=head, tail_node=tail,
-                                capacity=float(line[2]) * 0.1 * 0.5, length=int(line[3]), fft=float(line[4]),
+                                capacity=float(line[2]) * 0.1 * 0.5, length=int(line[3]), fft=101,
                                 b=float(line[5]), power=int(line[6]))
                 link.state.extend((state_1, state_2))
                 self.link_State.extend((state_1, state_2))
@@ -328,24 +321,15 @@ class GP:
         while sel:
             if sel[0] != des:
                 current_node = sel[0]
-                changed = False
                 for m_id in current_node.message_id:
                     next_node = self.net.Policy[des].map[current_node][m_id]
                     if next_node not in included_nodes:
                         included_nodes.append(next_node)
                         sel.append(next_node)
-                        for link in next_node.l_in:
-                            if link.tail_node == current_node and link not in included_links:
-                                included_links.append(link)
-                                included_states.extend(link.state)
-                                changed = True
-                if not changed:
-                    for m_id in current_node.message_id:
-                        next_node = self.net.Policy[des].map[current_node][m_id]
-                        for link in next_node.l_in:
-                            if link.tail_node == current_node and link not in included_links:
-                                included_links.append(link)
-                                included_states.extend(link.state)
+                    for link in next_node.l_in:
+                        if link.tail_node == current_node and link not in included_links:
+                            included_links.append(link)
+                            included_states.extend(link.state)
             sel = sel[1:]
         hyperpath = Hyperpath(ori, des, included_nodes)
         hyperpath.included_states = included_states
@@ -370,30 +354,32 @@ class GP:
         # update node rho
         for node in self.net.Node[1:]:
             node.rho = 0
-        ori.rho = float(1)
-        processed_nodes = []
-        for node in hyperpath.included_nodes[1:]:
-            if node in processed_nodes:
-                continue
-            for link in node.l_in:
-                for state in link.state:
-                    if  state.tail_node in hyperpath.included_nodes and state.tail_node.rho == 0:
-                        tail_node = state.tail_node
-                        for l_in in tail_node.l_in:
-                            for l_state in l_in.state:
-                                tail_node.rho += l_state.rho * l_state.tail_node.rho
-                                processed_nodes.append(tail_node)
-                    node.rho += state.rho * state.tail_node.rho
+        gap = inf
+        while gap > 1e-6:
+            previous_rho = {node: node.rho for node in hyperpath.included_nodes}
+            for node in hyperpath.included_nodes[:]:
+                if node == ori:
+                    for link in node.l_in:
+                        node.rho = sum(state.rho * state.tail_node.rho for state in link.state) + 1
+                else:
+                    for link in node.l_in:
+                        node.rho = sum(state.rho * state.tail_node.rho for state in link.state)
+            max_gap = 0
+            for node in hyperpath.included_nodes:
+                rel_change = abs(node.rho - previous_rho[node])
+                max_gap = max(max_gap, rel_change)
+            gap = max_gap
 
-        for node in self.net.Node[1:]:
+        for node in self.net.Node[:]:
             hyperpath.node_rho[node] = node.rho
-        hyperpath.node_rho[ori] = float(1)
+
         return hyperpath
 
     def shift_flow(self, od: ODPair):
         stt_hyperpath = self.get_hyperpath(od)
         for basic_hyperpath in od.basic_hyperpaths:
-            if basic_hyperpath.included_nodes == stt_hyperpath.included_nodes:
+            if (set(basic_hyperpath.included_nodes) == set(stt_hyperpath.included_nodes)
+                    and set(basic_hyperpath.included_states) == set(stt_hyperpath.included_states)):
                 hyperpath = basic_hyperpath
                 break
         else:
@@ -402,20 +388,23 @@ class GP:
         hyperpath.update_path_cost()
         min_dist = hyperpath.path_cost
 
-
         # shift flow
         for basic_hyperpath in od.basic_hyperpaths:
             if basic_hyperpath == hyperpath:
                 continue
-            temp = sum([state.derivative() * (basic_hyperpath.state_rho[state] * basic_hyperpath.node_rho[state.tail_node]
+            temp = sum([state.derivative() *
+                        (basic_hyperpath.state_rho[state] * basic_hyperpath.node_rho[state.tail_node]
                                               - hyperpath.state_rho[state] * hyperpath.node_rho[state.tail_node])**2
                         for state in list(set(hyperpath.included_states) | set(basic_hyperpath.included_states))])
-            shifted_flow = min((basic_hyperpath.path_cost - min_dist) / temp, basic_hyperpath.path_flow)
+            if basic_hyperpath.path_cost > min_dist:
+                shifted_flow = min((basic_hyperpath.path_cost - min_dist) / temp, basic_hyperpath.path_flow)
+            else:
+                shifted_flow = max((basic_hyperpath.path_cost - min_dist) / temp, -basic_hyperpath.path_flow)
             basic_hyperpath.path_flow -= shifted_flow
             hyperpath.path_flow += shifted_flow
         # update cost
             for state in basic_hyperpath.included_states:
-                state.flow -= shifted_flow * basic_hyperpath.state_rho[state] * hyperpath.node_rho[state.tail_node]
+                state.flow -= shifted_flow * basic_hyperpath.state_rho[state] * basic_hyperpath.node_rho[state.tail_node]
             for state in hyperpath.included_states:
                 state.flow += shifted_flow * hyperpath.state_rho[state] * hyperpath.node_rho[state.tail_node]
             self.net.update_all_state_cost()
@@ -423,16 +412,13 @@ class GP:
         od.basic_hyperpaths = [hyperpath for hyperpath in od.basic_hyperpaths if hyperpath.path_flow > 0]
 
     def convergence(self):
+        tstt = sum(state.flow * state.cost for state in self.net.link_State)
         sptt = 0
         for des in self.net.Dest:
             self.label_correcting(des.node_id)
-            for od in self.net.OD:
-                if od.destination == des:
-                    hyperpath = self.get_hyperpath(od)
-                    hyperpath.update_path_cost()
-                    sptt += hyperpath.path_cost * od.demand
-        tstt = sum(state.flow * state.cost for state in self.net.link_State)
-        cur_gap = (tstt / sptt) - 1
+        for od in self.net.OD:
+            sptt += od.origin.ett * od.demand
+        cur_gap = 1 - (sptt / tstt)
         return cur_gap
 
 class Output:
@@ -452,7 +438,16 @@ class Output:
 
 
 if __name__ == "__main__":
-    network = Network(name="Nguyen-Dupuis", strategy=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+    network = Network(name="Cyclic", strategy=[0, 0, 0, 1])
     assign = GP(network, 1e-6)
     # output = Output(network)
     # output.print_flow_cost()
+    # assign.initialize()
+    # for od in network.OD:
+    #     print(od)
+    #     for hyperpath in od.basic_hyperpaths:
+    #         print(hyperpath)
+    #         for node in hyperpath.included_nodes:
+    #             print(f'{node}: {hyperpath.node_rho[node]}')
+    #         for state in hyperpath.included_states:
+    #             print(f'{state}: {hyperpath.state_rho[state]}')

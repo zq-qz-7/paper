@@ -326,7 +326,7 @@ class Output:
 
 
 if __name__ == "__main__":
-    sf = Network("Nguyen-Dupuis")
+    sf = Network("SiouxFalls")
     # for link in sf.Link[1:]:
     #     print(f"{link}--flow:{link.flow}, cost:{link.cost}")
     assignment = GP(net=sf, epsilon=1e-6)
