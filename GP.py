@@ -3,6 +3,7 @@ import re
 from math import inf
 from itertools import product
 import numpy as np
+from copy import deepcopy
 
 class NODE:
     def __init__(self, node_id):
@@ -237,14 +238,13 @@ class GP:
         iter_times, cur_gap = 0, inf
         self.initialize()
         while cur_gap > self.epsilon:
-            print(f'****************************************************************')
             for des in self.net.Dest:
                 self.label_correcting(des.node_id)
                 for od in self.net.OD:
                     if od.destination == des:
                         self.shift_flow(od)
             iter_times += 1
-            cur_gap = 1e-7
+            cur_gap = self.convergence()
             print(f"iter_time {iter_times}: cur_gap= {cur_gap}")
 
     def label_correcting(self, des: int):
@@ -320,21 +320,31 @@ class GP:
         self.net.update_all_hyperpath_cost()
 
     def get_hyperpath(self, od: ODPair):
-        print(od)
         ori, des = od.origin, od.destination
         included_nodes = [ori]
         included_states = []
+        included_links = []
         sel = [ori]
         while sel:
             if sel[0] != des:
                 current_node = sel[0]
+                changed = False
                 for m_id in current_node.message_id:
                     next_node = self.net.Policy[des].map[current_node][m_id]
                     if next_node not in included_nodes:
                         included_nodes.append(next_node)
                         sel.append(next_node)
                         for link in next_node.l_in:
-                            if link.tail_node == current_node:
+                            if link.tail_node == current_node and link not in included_links:
+                                included_links.append(link)
+                                included_states.extend(link.state)
+                                changed = True
+                if not changed:
+                    for m_id in current_node.message_id:
+                        next_node = self.net.Policy[des].map[current_node][m_id]
+                        for link in next_node.l_in:
+                            if link.tail_node == current_node and link not in included_links:
+                                included_links.append(link)
                                 included_states.extend(link.state)
             sel = sel[1:]
         hyperpath = Hyperpath(ori, des, included_nodes)
@@ -356,25 +366,28 @@ class GP:
                         break
         for state in self.net.link_State:
             hyperpath.state_rho[state] = state.rho
-        print(hyperpath.included_states)
-        for state in hyperpath.included_states:
-            print(f'{state}\t{hyperpath.state_rho[state]}')
 
         # update node rho
         for node in self.net.Node[1:]:
             node.rho = 0
-        od.origin.rho = float(1)
+        ori.rho = float(1)
+        processed_nodes = []
         for node in hyperpath.included_nodes[1:]:
+            if node in processed_nodes:
+                continue
             for link in node.l_in:
                 for state in link.state:
+                    if  state.tail_node in hyperpath.included_nodes and state.tail_node.rho == 0:
+                        tail_node = state.tail_node
+                        for l_in in tail_node.l_in:
+                            for l_state in l_in.state:
+                                tail_node.rho += l_state.rho * l_state.tail_node.rho
+                                processed_nodes.append(tail_node)
                     node.rho += state.rho * state.tail_node.rho
+
         for node in self.net.Node[1:]:
             hyperpath.node_rho[node] = node.rho
         hyperpath.node_rho[ori] = float(1)
-
-        print(hyperpath.included_nodes)
-        for node in hyperpath.included_nodes:
-            print(f'{node}\t{hyperpath.node_rho[node]}')
         return hyperpath
 
     def shift_flow(self, od: ODPair):
