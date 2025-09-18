@@ -15,10 +15,10 @@ C_rate = 0.8
 M_rate = 0.05
 N_generation = 50
 
-n_name = "Nguyen-Dupuis"
+n_name = "Braess"
 m_gap = 0.0001
 l_gap = 0.0001
-gap_interval = 1000
+gap_interval = 50
 
 
 class NODE:
@@ -178,7 +178,7 @@ class Network:
             states = []
             for link in node.l_out:
                 states.append(link.state)
-            node.message = list(product(*states))
+            node.message = [list(comb) for comb in product(*states)]
             node.message_id = [i for i in range(len(node.message))]
             for link_states in node.message:
                 prob = 1
@@ -361,9 +361,18 @@ class UE:
                 self.network.link_State[i].aux_flow += temp[i]
 
     def convergence(self):
-        numerator = sum([state.cost * state.flow for state in self.network.link_State])
-        denominator = sum([state.cost * state.aux_flow for state in self.network.link_State])
-        return numerator / denominator - 1
+        tstt = sum([state.flow * state.cost for state in self.network.link_State])
+        sptt = 0
+        for des in self.network.Dest:
+            self.TD_OSP(des.node_id)
+            for od in self.network.OD:
+                if od.destination == des:
+                    sptt += od.origin.ett * od.demand
+        print(f'sptt={sptt}, tstt={tstt}')
+        return 1 - (sptt / tstt)
+        # numerator = sum([state.cost * state.flow for state in self.network.link_State])
+        # denominator = sum([state.cost * state.aux_flow for state in self.network.link_State])
+        # return numerator / denominator - 1
 
     def line_search(self):
         def derivative(step):
@@ -399,17 +408,17 @@ class UE:
             else:
                 res += state.cost * state.flow
         self.total_time = res
-        print(f'Total Travel Time: {self.total_time}')
+        print(f'\nTotal Travel Time: {self.total_time}\n')
 
     def state_info(self):
         for state in self.network.link_State:
             print(f'{state}: cost={state.cost}, flow={state.flow}')
-        cur_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        with open(f'data//UER{cur_time}.txt', 'a') as file:
-            file.write(f'Network Strategy:\n{self.network.strategy}\n')
-            file.write(f'Total Travel Time: {self.total_time}\n')
-            for state in self.network.link_State:
-                file.write(f'{state}: cost={state.cost * state.flow}, flow={state.flow}\n')
+        # cur_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # with open(f'data//UER{cur_time}.txt', 'a') as file:
+        #     file.write(f'Network Strategy:\n{self.network.strategy}\n')
+        #     file.write(f'Total Travel Time: {self.total_time}\n')
+        #     for state in self.network.link_State:
+        #         file.write(f'{state}: cost={state.cost * state.flow}, flow={state.flow}\n')
 
 
 class Genetic:
@@ -685,8 +694,8 @@ class Draw:
         plt.show()
 
 if __name__ == '__main__':
-    draw = Draw()
-    draw.plot_ch3_genetic()
-    # net = Network(name=n_name, strategy=[1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1])
-    # ue = UE(network=net, main_gap=0.0001, ls_gap=0.0001)
+    # draw = Draw()
+    # draw.plot_ch3_genetic()
+    net = Network(name=n_name, strategy=[1 for _ in range(5)])
+    ue = UE(network=net, main_gap=0.0001, ls_gap=0.0001)
     # gen = Genetic(dna_size=D_size, pop_size=P_size, c_rate=C_rate, m_rate=M_rate, n_generation=N_generation)
