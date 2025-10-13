@@ -7,6 +7,7 @@ import datetime
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
+from time import perf_counter as pc
 
 
 D_size = 19
@@ -15,7 +16,7 @@ C_rate = 0.8
 M_rate = 0.05
 N_generation = 50
 
-n_name = "Braess"
+n_name = "SiouxFalls"
 m_gap = 0.0001
 l_gap = 0.0001
 gap_interval = 50
@@ -319,6 +320,7 @@ class UE:
                     self.network.Policy[self.network.Node[des]].map[node][m_id] = next_node
 
     def run(self):
+        s = pc()
         self.initialize()
         gap = inf
         self.gap_list = []
@@ -337,6 +339,8 @@ class UE:
             self.update_state_flow(step)
             self.update_state_cost()
             iter_times += 1
+        e = pc()
+        print(f"\nRunning time is {e - s:.2f}")
 
     def initialize(self):
         for state in self.network.link_State:
@@ -696,6 +700,6 @@ class Draw:
 if __name__ == '__main__':
     # draw = Draw()
     # draw.plot_ch3_genetic()
-    net = Network(name=n_name, strategy=[1 for _ in range(5)])
+    net = Network(name=n_name, strategy=[1 for _ in range(76)])
     ue = UE(network=net, main_gap=0.0001, ls_gap=0.0001)
     # gen = Genetic(dna_size=D_size, pop_size=P_size, c_rate=C_rate, m_rate=M_rate, n_generation=N_generation)
